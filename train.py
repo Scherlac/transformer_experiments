@@ -136,7 +136,7 @@ class DatasetWrapper:
     @staticmethod
     def add_arguments(parser: argparse.ArgumentParser):
         parser.add_argument('--dataset-name', type=str, default='opus_books', help='Hugging Face dataset name')
-        parser.add_argument('--batch-size', type=int, default=8, help='Batch size for training and evaluation')
+        parser.add_argument('--batch-size', type=int, default=24, help='Batch size for training and evaluation')
         parser.add_argument('--src-lang', type=str, default='en', help='Source language for translation dataset')
         parser.add_argument('--tgt-lang', type=str, default='it', help='Target language for translation dataset')
         parser.add_argument('--max-length', type=int, default=350, help='Maximum sequence length for tokenization')
@@ -299,10 +299,20 @@ def run_validation(model, dataset_wrapper, device, tqdm_print_fn):
             tqdm_print_fn(f"Predicted: {output_text}")
 
             break  # Remove this break to run on the entire validation set
-            
-
 
     return total_loss / len(dataset_wrapper.val_dataloader)
+
+
+def rate(step, model_size, factor, warmup):
+    """
+    we have to default the step to 1 for LambdaLR function
+    to avoid zero raising to negative power.
+    """
+    if step == 0:
+        step = 1
+    return factor * (
+        model_size ** (-0.5) * min(step ** (-0.5), step * warmup ** (-1.5))
+    )
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -310,7 +320,7 @@ if __name__ == "__main__":
     DatasetWrapper.add_arguments(parser)
     ModelWrapper.add_arguments(parser)
     parser.add_argument('--experiment-name', type=str, default='transformer_experiment', help='Name of the experiment')
-    parser.add_argument('--learning-rate', type=float, default=1e-4, help='Learning rate for the optimizer')
+    parser.add_argument('--learning-rate', type=float, default=4e-4, help='Learning rate for the optimizer')
     parser.add_argument('--num-epochs', type=int, default=40, help='Number of training epochs')
     parser.add_argument('--data-path', type=str, default=str(data_root), help='Path to the data directory')
     parser.add_argument('--training-path', type=str, default=str(training_root), help='Path to the training runs directory')
@@ -335,7 +345,11 @@ if __name__ == "__main__":
 
     writer = SummaryWriter(args.experiment_name)
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate, eps=1e-9)
+    optimizer = torch.optim.Adam(
+        model.parameters(), 
+        lr=args.learning_rate, 
+        eps=1e-9
+        )
 
     latest_model_info = get_latest_model_filepath(args)
     if latest_model_info is not None:

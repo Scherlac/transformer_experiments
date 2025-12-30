@@ -5,6 +5,13 @@
 # the paper "Attention is all you need" introduces these components in detail
 # https://arxiv.org/abs/1706.03762
 
+# other sources to verify the implementation:
+# SRC: https://nlp.seas.harvard.edu/2018/04/03/attention.html
+# SRC: https://jalammar.github.io/illustrated-transformer/
+# SRC: https://github.com/harvardnlp/annotated-transformer
+
+
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -14,7 +21,7 @@ class InputEmbedding(nn.Module):
     def __init__(
             self, 
             d_model: int,
-            embedding_dim: int,
+            vocab_size: int,
             ):
         """
         Input embedding layer for transformer model.
@@ -24,10 +31,8 @@ class InputEmbedding(nn.Module):
         """
         super(InputEmbedding, self).__init__()
         self.d_model = d_model
-        self.embedding_dim = embedding_dim
-        self.embedding = nn.Embedding(
-            num_embeddings=d_model,
-            embedding_dim=embedding_dim)
+        self.vocab_size = vocab_size
+        self.embedding = nn.Embedding(vocab_size, d_model)
         
     def init_weights(
         self,
@@ -59,8 +64,8 @@ class PositionalEncoding(nn.Module):
 
         # for positional encoding, we build a matrix of shape (max_len, d_model)
         pe = torch.zeros(max_len, d_model)
-        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+        position = torch.arange(0, max_len).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model))
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
 
@@ -75,7 +80,7 @@ class PositionalEncoding(nn.Module):
 
 
     def forward(self, x):
-        # x = x + self.pe[:x.size(0), :]ű
+        # x = x + self.pe[:x.size(0), :]
         x = x + (self.pe[:, :x.shape[1], :]).requires_grad_(False)
         return self.dropout(x)
 
@@ -122,7 +127,6 @@ class FeedForward(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.linear1 = nn.Linear(d_model, d_ff) # this is the W_1 matrix and b_1 bias (by default bias is True)
         self.linear2 = nn.Linear(d_ff, d_model) # this is the W_2 matrix and b_2 bias
-        self.activation = nn.ReLU()
 
     def init_weights(
         self,
@@ -132,12 +136,13 @@ class FeedForward(nn.Module):
         nn.init.zeros_(self.linear1.bias)
         nn.init.zeros_(self.linear2.bias)
 
-    def forward(self, x):
-        x = self.linear1(x)
-        x = self.activation(x)
-        x = self.dropout(x)
-        x = self.linear2(x)
-        return x
+    def forward(self, x: torch.Tensor):
+        return self.linear2(self.dropout(self.linear1(x).relu()))
+        # x = self.linear1(x)
+        # x = x.relu()
+        # x = self.dropout(x)
+        # x = self.linear2(x)
+        # return x
 
 class MultiHeadAttention(nn.Module):
     def __init__(
@@ -160,10 +165,10 @@ class MultiHeadAttention(nn.Module):
         self.d_k = d_model // num_heads
         self.dropout = nn.Dropout(dropout)
 
-        self.linear_q = nn.Linear(d_model, d_model) # W_q ...
-        self.linear_k = nn.Linear(d_model, d_model)
-        self.linear_v = nn.Linear(d_model, d_model)
-        self.linear_out = nn.Linear(d_model, d_model)
+        self.linear_q = nn.Linear(d_model, d_model, bias=False) # W_q ...
+        self.linear_k = nn.Linear(d_model, d_model, bias=False)
+        self.linear_v = nn.Linear(d_model, d_model, bias=False)
+        self.linear_out = nn.Linear(d_model, d_model, bias=False)
 
     def init_weights(
         self,
@@ -172,10 +177,6 @@ class MultiHeadAttention(nn.Module):
         nn.init.xavier_uniform_(self.linear_k.weight)
         nn.init.xavier_uniform_(self.linear_v.weight)
         nn.init.xavier_uniform_(self.linear_out.weight)
-        nn.init.zeros_(self.linear_q.bias)
-        nn.init.zeros_(self.linear_k.bias)
-        nn.init.zeros_(self.linear_v.bias)
-        nn.init.zeros_(self.linear_out.bias)
 
     @staticmethod
     def attention(query, key, value, mask=None, dropout=None):
@@ -229,6 +230,7 @@ class MultiHeadAttention(nn.Module):
         # concatenate heads and put through final linear layer
         output = x.transpose(1, 2).contiguous().view(batch_size, -1, self.d_model)
         output = self.linear_out(output)
+        del query, key, value
         return output
 
 class ResidualConnection(nn.Module):
@@ -426,9 +428,7 @@ class ProjectionLayer(nn.Module):
         nn.init.zeros_(self.linear.bias)
 
     def forward(self, x):
-        x = self.linear(x)
-        x = torch.log_softmax(x, dim=-1)
-        return x
+        return torch.log_softmax(self.linear(x), dim=-1)
     
 class Transformer(nn.Module):
     def __init__(
@@ -458,11 +458,11 @@ class Transformer(nn.Module):
         """
         super(Transformer, self).__init__()
         # Encoder components
-        self.src_embedding = InputEmbedding(src_vocab_size, d_model)
+        self.src_embedding = InputEmbedding(d_model, src_vocab_size)
         self.src_pos_encoding = PositionalEncoding(d_model, max_length, dropout)
         self.encoder = Encoder(num_encoder_layers, d_model, num_heads, dim_feedforward, dropout)
         # Decoder components
-        self.tgt_embedding = InputEmbedding(tgt_vocab_size, d_model)
+        self.tgt_embedding = InputEmbedding(d_model, tgt_vocab_size)
         self.tgt_pos_encoding = PositionalEncoding(d_model, max_length, dropout)
         self.decoder = Decoder(num_decoder_layers, d_model, num_heads, dim_feedforward, dropout)
         self.projection = ProjectionLayer(d_model, tgt_vocab_size)

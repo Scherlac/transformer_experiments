@@ -120,5 +120,5 @@ def causal_mask(size):
     """Create a causal mask for the decoder."""
     # diagonal=0 includes the main diagonal  -> not working, dont know why
     # diagonal=1 includes the main diagonal and the one above it ?? --> it works this way
-    mask = torch.tril(torch.ones((1, size, size)), diagonal=1).type(torch.int)
+    mask = torch.tril(torch.ones((1, size, size)), diagonal=1).type(torch.int8)
     return mask == 0
