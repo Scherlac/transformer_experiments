@@ -439,7 +439,7 @@ class Transformer(nn.Module):
             num_heads: int = 8,
             num_encoder_layers: int = 6,
             num_decoder_layers: int = 6,
-            d_ff: int = 2048,
+            dim_feedforward: int = 2048,
             dropout: float = 0.1,
             max_len: int = 5000,
             ):
@@ -452,7 +452,7 @@ class Transformer(nn.Module):
             num_heads (int): Number of attention heads.
             num_encoder_layers (int): Number of encoder blocks.
             num_decoder_layers (int): Number of decoder blocks.
-            d_ff (int): Dimension of the feedforward layer.
+            dim_feedforward (int): Dimension of the feedforward layer.
             dropout (float): Dropout rate.
             max_len (int): Maximum length of the input sequence.
         """
@@ -460,11 +460,11 @@ class Transformer(nn.Module):
         # Encoder components
         self.src_embedding = InputEmbedding(src_vocab_size, d_model)
         self.src_pos_encoding = PositionalEncoding(d_model, max_len, dropout)
-        self.encoder = Encoder(num_encoder_layers, d_model, num_heads, d_ff, dropout)
+        self.encoder = Encoder(num_encoder_layers, d_model, num_heads, dim_feedforward, dropout)
         # Decoder components
         self.tgt_embedding = InputEmbedding(tgt_vocab_size, d_model)
         self.tgt_pos_encoding = PositionalEncoding(d_model, max_len, dropout)
-        self.decoder = Decoder(num_decoder_layers, d_model, num_heads, d_ff, dropout)
+        self.decoder = Decoder(num_decoder_layers, d_model, num_heads, dim_feedforward, dropout)
         self.projection = ProjectionLayer(d_model, tgt_vocab_size)
 
     def init_weights(
