@@ -311,7 +311,7 @@ if __name__ == "__main__":
     ModelWrapper.add_arguments(parser)
     parser.add_argument('--experiment-name', type=str, default='transformer_experiment', help='Name of the experiment')
     parser.add_argument('--learning-rate', type=float, default=1e-4, help='Learning rate for the optimizer')
-    parser.add_argument('--num-epochs', type=int, default=10, help='Number of training epochs')
+    parser.add_argument('--num-epochs', type=int, default=40, help='Number of training epochs')
     parser.add_argument('--data-path', type=str, default=str(data_root), help='Path to the data directory')
     parser.add_argument('--training-path', type=str, default=str(training_root), help='Path to the training runs directory')
 
@@ -328,6 +328,7 @@ if __name__ == "__main__":
     dataset_wrapper = DatasetWrapper(args)
     model_wrapper = ModelWrapper(args)
     model = model_wrapper.model
+    model.init_weights()
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model.to(device)

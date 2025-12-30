@@ -118,7 +118,7 @@ class BilingualDataset(Dataset):
 
 def causal_mask(size):
     """Create a causal mask for the decoder."""
-    # diagonal=0 includes the main diagonal
-    # diagonal=1 includes the main diagonal and the one above it
-    mask = torch.tril(torch.ones((1, size, size)), diagonal=0).type(torch.int)
+    # diagonal=0 includes the main diagonal  -> not working, dont know why
+    # diagonal=1 includes the main diagonal and the one above it ?? --> it works this way
+    mask = torch.tril(torch.ones((1, size, size)), diagonal=1).type(torch.int)
     return mask == 0
