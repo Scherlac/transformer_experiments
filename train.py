@@ -71,6 +71,8 @@ class DatasetWrapper:
             args: argparse.Namespace
 
     ):
+        self.max_length = args.max_length
+
         # Load dataset
         dataset = load_dataset(args.dataset_name, f'{args.src_lang}-{args.tgt_lang}', split='train')
 
@@ -218,6 +220,90 @@ def get_latest_model_filepath(args):
 
     return latest_file
 
+def greedy_decode(model, dataset_wrapper, src, src_mask, max_length, device):
+    model.eval()
+    src_tokenizer = dataset_wrapper.tokenizer_src.tokenizer
+    tgt_tokenizer = dataset_wrapper.tokenizer_tgt.tokenizer
+
+    sos = tgt_tokenizer.token_to_id("[CLS]")
+    eos = tgt_tokenizer.token_to_id("[SEP]")
+    pad = tgt_tokenizer.token_to_id("[PAD]")
+
+    # Pre-compute source encoding
+    encoder_output = model.encode(src, src_mask)
+    # Initialize decoder input with SOS token
+    decoder_input = torch.cat([
+        torch.tensor([[sos]], device=device),  # (1, 1)
+    ], dim=1).type_as(src)  # (1, 2)
+    while True:
+        if decoder_input.size(1) >= max_length:
+            break
+        tgt_mask = causal_mask(decoder_input.size(1)).type_as(src_mask).to(device)  # (1, tgt_seq_len, tgt_seq_len)
+        decoder_output = model.decode(decoder_input, encoder_output, src_mask, tgt_mask)  # (1, tgt_seq_len, d_model)
+        projection_output = model.project(decoder_output[:, -1:, :])
+
+        _, next_token = torch.max(projection_output, dim=-1)  # (1, 1)
+        next_token_id = next_token.item()
+        decoder_input = torch.cat([
+            decoder_input, 
+            next_token,
+            ], dim=1).type_as(src)  # (1, tgt_seq_len + 1)
+        
+        if next_token_id == eos:
+            break
+
+    return decoder_input  # (1, generated_seq_len)
+    
+
+def run_validation(model, dataset_wrapper, device, tqdm_print_fn):
+    model.eval()
+    total_loss = 0.0
+    loss_fn = nn.CrossEntropyLoss(
+        ignore_index=dataset_wrapper.tokenizer_tgt.tokenizer.token_to_id("[PAD]"),
+        label_smoothing=0.1
+    ).to(device)
+
+    source_texts = []
+    target_texts = []
+    predicted_texts = []
+
+    with torch.no_grad():
+        for batch in dataset_wrapper.val_dataloader:
+            src = batch['encoder_input'].to(device) # (batch_size, src_seq_len)
+            # tgt = batch['decoder_input'].to(device) # (batch_size, tgt_seq_len)
+            src_mask = batch['encoder_mask'].to(device) # (batch_size, 1, 1, src_seq_len)
+            # tgt_mask = batch['decoder_mask'].to(device) # (batch_size, 1, tgt_seq_len, tgt_seq_len)
+
+            assert src.size(0) == 1, "Validation batch size should be 1"
+
+            encoder_output = greedy_decode(
+                model,
+                dataset_wrapper,
+                src,
+                src_mask,
+                max_length=dataset_wrapper.max_length,
+                device=device
+            )
+
+            source_text = batch['src_text'][0]
+            source_texts.append(source_text)
+            target_text = batch['tgt_text'][0]
+            target_texts.append(target_text)
+
+            output_text = dataset_wrapper.tokenizer_tgt.tokenizer.decode(encoder_output[0].detach().cpu().numpy(), skip_special_tokens=True)
+            predicted_texts.append(output_text)
+
+            tqdm_print_fn('-'*50)
+            tqdm_print_fn(f"Source: {source_text}")
+            tqdm_print_fn(f"Target: {target_text}")
+            tqdm_print_fn(f"Predicted: {output_text}")
+
+            break  # Remove this break to run on the entire validation set
+            
+
+
+    return total_loss / len(dataset_wrapper.val_dataloader)
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     TokenizerWrapper.add_arguments(parser)
@@ -304,6 +390,18 @@ if __name__ == "__main__":
             global_step += 1
             total_loss += loss.item()
 
+            # Run validation every 500 steps
+            if (batch_idx + 1) % 100 == 0:
+                val_loss = run_validation(
+                    model,
+                    dataset_wrapper,
+                    device,
+                    batch_iterator.write
+                )
+                writer.add_scalar('Validation Loss', val_loss, global_step)
+                writer.flush()
+                model.train()
+
 
         # Save model checkpoint
         model_filepath = get_model_filepath(args, epoch)
@@ -314,6 +412,7 @@ if __name__ == "__main__":
              'optimizer_state_dict': optimizer.state_dict()
             }, model_filepath)
         print(f"Model saved to {model_filepath}")
+
 
 
 
