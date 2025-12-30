@@ -20,6 +20,8 @@ import argparse
 # from transformers import AutoTokenizer, AutoModelForSequenceClassification
 # from torch.optim import AdamW
 
+data_root = (pathlib.Path(__file__).parent / 'data').resolve()
+training_root = (pathlib.Path(__file__).parent / 'runs').resolve()
 
 class TokenizerWrapper:
     def __init__(
@@ -28,13 +30,14 @@ class TokenizerWrapper:
             dataset=None,
             lang: str = "en"
     ):
-        self.tokenizer_path = pathlib.Path(arguments.tokenizer_path) / arguments.tokenizer_file.format(lang=lang)
+        self.tokenizer_path = data_root / arguments.tokenizer_path / arguments.tokenizer_file.format(lang=lang)
         self.vocab_size = arguments.vocab_size
         self.lang = lang
 
         if self.tokenizer_path.exists():
             self.tokenizer = Tokenizer.from_file(str(self.tokenizer_path))
         else:
+            self.tokenizer_path.parent.mkdir(parents=True, exist_ok=True)
             self.tokenizer = Tokenizer(WordLevel(unk_token="[UNK]"))
             self.tokenizer.pre_tokenizer = Whitespace()
             self.trainer = WordLevelTrainer(
@@ -58,9 +61,9 @@ class TokenizerWrapper:
 
     @staticmethod
     def add_arguments(parser: argparse.ArgumentParser):
-        parser.add_argument('--tokenizer_path', type=str, required=True, help='Path to save/load the tokenizer')
-        parser.add_argument('--tokenizer_file', type=str, default='tokenizer_{lang}.json', help='Tokenizer file name pattern with {lang} placeholder')
-        parser.add_argument('--vocab_size', type=int, default=30522, help='Vocabulary size for the tokenizer')
+        parser.add_argument('--tokenizer-path', type=str, default="tokens", help='Path to save/load the tokenizer')
+        parser.add_argument('--tokenizer-file', type=str, default='tokenizer_{lang}.json', help='Tokenizer file name pattern with {lang} placeholder')
+        parser.add_argument('--vocab-size', type=int, default=30522, help='Vocabulary size for the tokenizer')
 
 class DatasetWrapper:
     def __init__(
@@ -119,22 +122,21 @@ class DatasetWrapper:
             self.bilingual_train_dataset,
             batch_size=args.batch_size,
             shuffle=True,
-            collate_fn=causal_mask
+            # collate_fn=causal_mask
         )
         self.val_dataloader = DataLoader(
             self.bilingual_val_dataset,
             batch_size=1, # args.batch_size, # we use batch size 1 for evaluation
             shuffle=False,
-            collate_fn=causal_mask
+            # collate_fn=causal_mask
         )
 
     @staticmethod
     def add_arguments(parser: argparse.ArgumentParser):
-        TokenizerWrapper.add_arguments(parser)
         parser.add_argument('--dataset-name', type=str, default='opus_books', help='Hugging Face dataset name')
         parser.add_argument('--batch-size', type=int, default=8, help='Batch size for training and evaluation')
         parser.add_argument('--src-lang', type=str, default='en', help='Source language for translation dataset')
-        parser.add_argument('--tgt-lang', type=str, default='de', help='Target language for translation dataset')
+        parser.add_argument('--tgt-lang', type=str, default='it', help='Target language for translation dataset')
         parser.add_argument('--max-length', type=int, default=350, help='Maximum sequence length for tokenization')
         # validation and test splits for tokenizer training
         parser.add_argument('--validation-split', type=float, default=0.1, help='Proportion of data for validation')
@@ -192,13 +194,13 @@ class ModelWrapper:
         parser.add_argument('--model-prefix', type=str, default='transmodel_', help='Prefix for saved model files')
 
 def get_model_filepath(args, epoch):
-    model_folder = pathlib.Path(args.model_folder)
+    model_folder = training_root / args.model_folder
     model_folder.mkdir(parents=True, exist_ok=True)
     model_filename = f"{args.model_prefix}{epoch + 1:04d}.pt"
     return model_folder / model_filename
 
 def get_latest_model_filepath(args):
-    model_folder = pathlib.Path(args.model_folder)
+    model_folder = training_root / args.model_folder
     if not model_folder.exists():
         return None
     model_files = list(model_folder.glob(f"{args.model_prefix}*.pt"))
@@ -224,9 +226,18 @@ if __name__ == "__main__":
     parser.add_argument('--experiment-name', type=str, default='transformer_experiment', help='Name of the experiment')
     parser.add_argument('--learning-rate', type=float, default=1e-4, help='Learning rate for the optimizer')
     parser.add_argument('--num-epochs', type=int, default=10, help='Number of training epochs')
-    
+    parser.add_argument('--data-path', type=str, default=str(data_root), help='Path to the data directory')
+    parser.add_argument('--training-path', type=str, default=str(training_root), help='Path to the training runs directory')
 
     args = parser.parse_args()
+
+    if args.data_path:
+        data_root = pathlib.Path(args.data_path).resolve()
+        data_root.mkdir(parents=True, exist_ok=True)
+
+    if args.training_path:
+        training_root = pathlib.Path(args.training_path).resolve()
+        training_root.mkdir(parents=True, exist_ok=True)
 
     dataset_wrapper = DatasetWrapper(args)
     model_wrapper = ModelWrapper(args)
@@ -274,7 +285,7 @@ if __name__ == "__main__":
             decoder_output = model.decode(tgt, encoder_output, src_mask, tgt_mask) # (batch_size, tgt_seq_len, d_model)
             projection_output = model.project(decoder_output) # (batch_size, tgt_seq_len, tgt_vocab_size)
 
-            label = batch['labels'].to(device) # (batch_size, tgt_seq_len)
+            label = batch['label'].to(device) # (batch_size, tgt_seq_len)
             
             # (batch_size, tgt_seq_len, tgt_vocab_size) -> (batch_size * tgt_seq_len, tgt_vocab_size)
             loss = loss_fn(projection_output.view(-1, projection_output.size(-1)), label.view(-1))

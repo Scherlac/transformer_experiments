@@ -9,7 +9,7 @@ class BilingualDataset(Dataset):
     def __init__(
             self, 
             dataset, 
-            src_tokenizer : torch.Tokenizer, 
+            src_tokenizer, 
             tgt_tokenizer, 
             src_lang='en', 
             tgt_lang='de', 
@@ -32,9 +32,17 @@ class BilingualDataset(Dataset):
         self.tgt_lang = tgt_lang
         self.max_length = max_length
     
-        self.sos_token_id = torch.Tensor(tgt_tokenizer.token_to_id("[CLS]"), dtype=torch.int64)
-        self.eos_token_id = torch.Tensor(tgt_tokenizer.token_to_id("[SEP]"), dtype=torch.int64)
-        self.pad_token_id = torch.Tensor(tgt_tokenizer.token_to_id("[PAD]"), dtype=torch.int64)
+        self.sos_token_id = torch.Tensor([tgt_tokenizer.token_to_id("[CLS]")]).type(torch.int64)
+        self.eos_token_id = torch.Tensor([tgt_tokenizer.token_to_id("[SEP]")]).type(torch.int64)
+        self.pad_token_id = torch.Tensor([tgt_tokenizer.token_to_id("[PAD]")]).type(torch.int64)
+
+        # new() received an invalid combination of arguments - got (list, dtype=torch.dtype), but expected one of:
+        # * (*, torch.device device = None)
+        #     didn't match because some of the keywords were incorrect: dtype
+        # * (torch.Storage storage)
+        # * (Tensor other)
+        # * (tuple of ints size, *, torch.device device = None)
+        # * (object data, *, torch.device device = None)
 
     def __len__(self):
         return len(self.dataset)
@@ -67,18 +75,19 @@ class BilingualDataset(Dataset):
 
         # Add special tokens for source sequence
         src_padded_length = self.max_length - (len(src_ids) + 2)
-        src_padding = torch.full((src_padded_length,), self.pad_token_id, dtype=torch.int64)
+        # argument 'fill_value' (position 2) must be Number, not Tensor
+        src_padding = torch.full((src_padded_length,), self.pad_token_id.item()).type(torch.int64)
         src_input_ids = torch.cat([self.sos_token_id, src_ids, self.eos_token_id, src_padding], dim=0)
 
         # Add special tokens for target sequence
         tgt_padded_length = self.max_length - (len(tgt_ids) + 1)
-        tgt_padding = torch.full((tgt_padded_length,), self.pad_token_id, dtype=torch.int64)
+        tgt_padding = torch.full((tgt_padded_length,), self.pad_token_id.item()).type(torch.int64)
         tgt_input_ids = torch.cat([self.sos_token_id, tgt_ids, tgt_padding], dim=0)
         tgt_labels = torch.cat([self.sos_token_id, tgt_ids], dim=0)
 
         # Add special tokens for target labels
         tgt_padded_length = self.max_length - (len(tgt_ids) + 1)
-        tgt_padding = torch.full((tgt_padded_length,), -100, dtype=torch.int64)
+        tgt_padding = torch.full((tgt_padded_length,), self.pad_token_id.item(), dtype=torch.int64)
         tgt_labels = torch.cat([tgt_ids, self.eos_token_id, tgt_padding], dim=0)
 
         assert len(src_input_ids) == self.max_length, f"Source input ids length {len(src_input_ids)} does not match max length {self.max_length}"
@@ -109,5 +118,7 @@ class BilingualDataset(Dataset):
 
 def causal_mask(size):
     """Create a causal mask for the decoder."""
-    mask = torch.tril(torch.ones(1, size, size), diagonal=1).type(torch.int)
+    # diagonal=0 includes the main diagonal
+    # diagonal=1 includes the main diagonal and the one above it
+    mask = torch.tril(torch.ones((1, size, size)), diagonal=0).type(torch.int)
     return mask == 0

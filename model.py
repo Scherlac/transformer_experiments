@@ -441,7 +441,7 @@ class Transformer(nn.Module):
             num_decoder_layers: int = 6,
             dim_feedforward: int = 2048,
             dropout: float = 0.1,
-            max_len: int = 5000,
+            max_length: int = 5000,
             ):
         """
         Transformer model.
@@ -459,11 +459,11 @@ class Transformer(nn.Module):
         super(Transformer, self).__init__()
         # Encoder components
         self.src_embedding = InputEmbedding(src_vocab_size, d_model)
-        self.src_pos_encoding = PositionalEncoding(d_model, max_len, dropout)
+        self.src_pos_encoding = PositionalEncoding(d_model, max_length, dropout)
         self.encoder = Encoder(num_encoder_layers, d_model, num_heads, dim_feedforward, dropout)
         # Decoder components
         self.tgt_embedding = InputEmbedding(tgt_vocab_size, d_model)
-        self.tgt_pos_encoding = PositionalEncoding(d_model, max_len, dropout)
+        self.tgt_pos_encoding = PositionalEncoding(d_model, max_length, dropout)
         self.decoder = Decoder(num_decoder_layers, d_model, num_heads, dim_feedforward, dropout)
         self.projection = ProjectionLayer(d_model, tgt_vocab_size)
 
