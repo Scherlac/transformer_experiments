@@ -32,9 +32,11 @@ class BilingualDataset(Dataset):
         self.tgt_lang = tgt_lang
         self.max_length = max_length
     
-        self.sos_token_id = torch.Tensor([tgt_tokenizer.token_to_id("[CLS]")]).type(torch.int64)
-        self.eos_token_id = torch.Tensor([tgt_tokenizer.token_to_id("[SEP]")]).type(torch.int64)
+        self.sos_token_id = torch.Tensor([tgt_tokenizer.token_to_id("[SOS]")]).type(torch.int64)
+        self.eos_token_id = torch.Tensor([tgt_tokenizer.token_to_id("[EOS]")]).type(torch.int64)
         self.pad_token_id = torch.Tensor([tgt_tokenizer.token_to_id("[PAD]")]).type(torch.int64)
+
+        self.causal_mask = causal_mask(self.max_length)
 
         # new() received an invalid combination of arguments - got (list, dtype=torch.dtype), but expected one of:
         # * (*, torch.device device = None)
@@ -83,11 +85,8 @@ class BilingualDataset(Dataset):
         tgt_padded_length = self.max_length - (len(tgt_ids) + 1)
         tgt_padding = torch.full((tgt_padded_length,), self.pad_token_id.item()).type(torch.int64)
         tgt_input_ids = torch.cat([self.sos_token_id, tgt_ids, tgt_padding], dim=0)
-        tgt_labels = torch.cat([self.sos_token_id, tgt_ids], dim=0)
 
         # Add special tokens for target labels
-        tgt_padded_length = self.max_length - (len(tgt_ids) + 1)
-        tgt_padding = torch.full((tgt_padded_length,), self.pad_token_id.item(), dtype=torch.int64)
         tgt_labels = torch.cat([tgt_ids, self.eos_token_id, tgt_padding], dim=0)
 
         assert len(src_input_ids) == self.max_length, f"Source input ids length {len(src_input_ids)} does not match max length {self.max_length}"
@@ -103,7 +102,7 @@ class BilingualDataset(Dataset):
         decoder_mask = (tgt_input_ids != self.pad_token_id)
         decoder_mask = decoder_mask.unsqueeze(0)
         decoder_mask = decoder_mask.unsqueeze(0).int()
-        decoder_mask = decoder_mask & causal_mask(tgt_input_ids.size(0))
+        decoder_mask = decoder_mask & self.causal_mask
 
         return {
             'encoder_input': src_input_ids,
@@ -120,5 +119,5 @@ def causal_mask(size):
     """Create a causal mask for the decoder."""
     # diagonal=0 includes the main diagonal  -> not working, dont know why
     # diagonal=1 includes the main diagonal and the one above it ?? --> it works this way
-    mask = torch.tril(torch.ones((1, size, size)), diagonal=1).type(torch.int8)
+    mask = torch.triu(torch.ones((1, size, size)), diagonal=1).type(torch.int8)
     return mask == 0

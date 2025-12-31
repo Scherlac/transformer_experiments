@@ -42,7 +42,7 @@ class TokenizerWrapper:
             self.tokenizer.pre_tokenizer = Whitespace()
             self.trainer = WordLevelTrainer(
                 vocab_size=self.vocab_size,
-                special_tokens=["[UNK]", "[PAD]", "[CLS]", "[SEP]", "[MASK]"],
+                special_tokens=["[UNK]", "[PAD]", "[SOS]", "[EOS]", "[MASK]"],
                 min_frequency=2
             )
             self.train_tokenizer(dataset)
@@ -222,11 +222,12 @@ def get_latest_model_filepath(args):
 
 def greedy_decode(model, dataset_wrapper, src, src_mask, max_length, device):
     model.eval()
+
     src_tokenizer = dataset_wrapper.tokenizer_src.tokenizer
     tgt_tokenizer = dataset_wrapper.tokenizer_tgt.tokenizer
 
-    sos = tgt_tokenizer.token_to_id("[CLS]")
-    eos = tgt_tokenizer.token_to_id("[SEP]")
+    sos = tgt_tokenizer.token_to_id("[SOS]")
+    eos = tgt_tokenizer.token_to_id("[EOS]")
     pad = tgt_tokenizer.token_to_id("[PAD]")
 
     # Pre-compute source encoding
@@ -258,10 +259,6 @@ def greedy_decode(model, dataset_wrapper, src, src_mask, max_length, device):
 def run_validation(model, dataset_wrapper, device, tqdm_print_fn):
     model.eval()
     total_loss = 0.0
-    loss_fn = nn.CrossEntropyLoss(
-        ignore_index=dataset_wrapper.tokenizer_tgt.tokenizer.token_to_id("[PAD]"),
-        label_smoothing=0.1
-    ).to(device)
 
     source_texts = []
     target_texts = []
