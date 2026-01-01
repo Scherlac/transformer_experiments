@@ -1,5 +1,5 @@
 
-
+import random
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset
@@ -32,9 +32,9 @@ class BilingualDataset(Dataset):
         self.tgt_lang = tgt_lang
         self.max_length = max_length
     
-        self.sos_token_id = torch.Tensor([tgt_tokenizer.token_to_id("[SOS]")]).type(torch.int64)
-        self.eos_token_id = torch.Tensor([tgt_tokenizer.token_to_id("[EOS]")]).type(torch.int64)
-        self.pad_token_id = torch.Tensor([tgt_tokenizer.token_to_id("[PAD]")]).type(torch.int64)
+        self.sos_token_id = torch.Tensor([tgt_tokenizer.token_to_id("[SOS]")]).type(torch.int)
+        self.eos_token_id = torch.Tensor([tgt_tokenizer.token_to_id("[EOS]")]).type(torch.int)
+        self.pad_token_id = torch.Tensor([tgt_tokenizer.token_to_id("[PAD]")]).type(torch.int)
 
         self.causal_mask = causal_mask(self.max_length)
 
@@ -52,8 +52,14 @@ class BilingualDataset(Dataset):
 
     def __getitem__(self, idx):
         item = self.dataset[idx]
-        src_text = item['translation'][self.src_lang]
-        tgt_text = item['translation'][self.tgt_lang]
+
+        # random language selection (src, tgt)
+        src_lang = random.choice([self.src_lang, self.tgt_lang])
+        tgt_lang = random.choice([self.src_lang, self.tgt_lang])
+
+        # add language tokens before encoding
+        src_text = f"[{src_lang}] " + item['translation'][src_lang]
+        tgt_text = f"[{tgt_lang}] " + item['translation'][tgt_lang]
 
         src_encoding = self.src_tokenizer.encode(
             src_text,
@@ -72,18 +78,18 @@ class BilingualDataset(Dataset):
         ).ids
 
         # Convert to torch tensors
-        src_ids = torch.tensor(src_encoding, dtype=torch.int64)
-        tgt_ids = torch.tensor(tgt_encoding, dtype=torch.int64)
+        src_ids = torch.tensor(src_encoding, dtype=torch.int)
+        tgt_ids = torch.tensor(tgt_encoding, dtype=torch.int)
 
         # Add special tokens for source sequence
         src_padded_length = self.max_length - (len(src_ids) + 2)
         # argument 'fill_value' (position 2) must be Number, not Tensor
-        src_padding = torch.full((src_padded_length,), self.pad_token_id.item()).type(torch.int64)
+        src_padding = torch.full((src_padded_length,), self.pad_token_id.item()).type(torch.int)
         src_input_ids = torch.cat([self.sos_token_id, src_ids, self.eos_token_id, src_padding], dim=0)
 
         # Add special tokens for target sequence
         tgt_padded_length = self.max_length - (len(tgt_ids) + 1)
-        tgt_padding = torch.full((tgt_padded_length,), self.pad_token_id.item()).type(torch.int64)
+        tgt_padding = torch.full((tgt_padded_length,), self.pad_token_id.item()).type(torch.int)
         tgt_input_ids = torch.cat([self.sos_token_id, tgt_ids, tgt_padding], dim=0)
 
         # Add special tokens for target labels
@@ -96,12 +102,12 @@ class BilingualDataset(Dataset):
         # Create attention masks for encoder
         encoder_mask = (src_input_ids != self.pad_token_id)
         encoder_mask = encoder_mask.unsqueeze(0)
-        encoder_mask = encoder_mask.unsqueeze(0).int()
+        encoder_mask = encoder_mask.unsqueeze(0).type(torch.int)
 
         # Create decoder mask will be created in the model using subsequent masking
         decoder_mask = (tgt_input_ids != self.pad_token_id)
         decoder_mask = decoder_mask.unsqueeze(0)
-        decoder_mask = decoder_mask.unsqueeze(0).int()
+        decoder_mask = decoder_mask.unsqueeze(0).type(torch.int)
         decoder_mask = decoder_mask & self.causal_mask
 
         return {
@@ -119,5 +125,5 @@ def causal_mask(size):
     """Create a causal mask for the decoder."""
     # diagonal=0 includes the main diagonal  -> not working, dont know why
     # diagonal=1 includes the main diagonal and the one above it ?? --> it works this way
-    mask = torch.triu(torch.ones((1, size, size)), diagonal=1).type(torch.int8)
+    mask = torch.triu(torch.ones((1, size, size)), diagonal=1).type(torch.int)
     return mask == 0

@@ -2,6 +2,8 @@ import os
 import pathlib
 import re
 import tqdm
+import math
+import random
 import torch
 import torch.nn as nn
 from datasets import load_dataset
@@ -17,6 +19,14 @@ from model import Transformer
 
 import argparse
 
+from typing import (
+    List,
+    Tuple,
+    Dict,
+    Any,
+    Optional,
+
+)
 
 
 # from transformers import AutoTokenizer, AutoModelForSequenceClassification
@@ -30,9 +40,10 @@ class TokenizerWrapper:
             self,
             arguments: argparse.Namespace,
             dataset=None,
-            lang: str = 'all'
+            lang: str | List[str] = 'all'
     ):
-        self.tokenizer_path = data_root / arguments.tokenizer_path / arguments.tokenizer_file.format(lang=lang)
+        file_tag = lang if isinstance(lang, str) else 'all'
+        self.tokenizer_path = data_root / arguments.tokenizer_path / arguments.tokenizer_file.format(lang=file_tag)
         self.lang = lang
         self.vocab_size = arguments.vocab_size
 
@@ -42,9 +53,12 @@ class TokenizerWrapper:
             self.tokenizer_path.parent.mkdir(parents=True, exist_ok=True)
             self.tokenizer = Tokenizer(BPE(unk_token="[UNK]"))
             self.tokenizer.pre_tokenizer = Whitespace()
+            # tokens for languages
+            self.lang_tokens = { l: f"[{l}]" for l in ( [lang] if isinstance(lang, str) else lang ) }
+
             self.trainer = BpeTrainer(
                 vocab_size=self.vocab_size,
-                special_tokens=["[UNK]", "[PAD]", "[SOS]", "[EOS]", "[MASK]"],
+                special_tokens=["[UNK]", "[PAD]", "[SOS]", "[EOS]", "[MASK]"] + list(self.lang_tokens.values()),
                 min_frequency=2
             )
             if dataset is not None:
@@ -61,11 +75,17 @@ class TokenizerWrapper:
         self.mask_token = "[MASK]"
 
 
-
-
     def get_all_texts(self, dataset):
+
+        if isinstance(self.lang, str):
+            langs = [self.lang] 
+        elif isinstance(self.lang, list):
+            langs = [ lang for lang in self.lang if lang in dataset[0]['translation'] ]
+
         for sample in dataset:
-            yield sample['translation'][self.lang]
+
+            for lang in langs:
+                yield sample['translation'][lang]
 
     def train_tokenizer(self, dataset):
         self.tokenizer.train_from_iterator(
@@ -79,7 +99,7 @@ class TokenizerWrapper:
     def add_arguments(parser: argparse.ArgumentParser):
         parser.add_argument('--tokenizer-path', type=str, default="tokens", help='Path to save/load the tokenizer')
         parser.add_argument('--tokenizer-file', type=str, default='tokenizer_{lang}.json', help='Tokenizer file name pattern with {lang} placeholder')
-        parser.add_argument('--vocab-size', type=int, default=20000, help='Vocabulary size for the tokenizer')
+        parser.add_argument('--vocab-size', type=int, default=1024, help='Vocabulary size for the tokenizer')
 
 class DatasetWrapper:
     def __init__(
@@ -93,15 +113,17 @@ class DatasetWrapper:
         dataset = load_dataset(args.dataset_name, f'{args.src_lang}-{args.tgt_lang}', split='train')
 
         # Initialize and train tokenizer
-        self.tokenizer_src = TokenizerWrapper(args, dataset=dataset, lang=args.src_lang)
-        self.tokenizer_tgt = TokenizerWrapper(args, dataset=dataset, lang=args.tgt_lang)
+        self.tokenizer_src = TokenizerWrapper(args, dataset=dataset, lang=[args.src_lang, args.tgt_lang])
+        self.tokenizer_tgt = self.tokenizer_src  # Using the same tokenizer for both source and target
 
         # Update vocab size to actual tokenizer size
-        args.vocab_size = max(self.tokenizer_src.vocab_size, self.tokenizer_tgt.vocab_size)
+        vocab_size = int(max(args.vocab_size, self.tokenizer_src.vocab_size, self.tokenizer_tgt.vocab_size) )
 
         print(f"Source tokenizer vocab size: {self.tokenizer_src.vocab_size}")
         print(f"Target tokenizer vocab size: {self.tokenizer_tgt.vocab_size}")
-        print(f"Model vocab size set to: {args.vocab_size}")
+        print(f"Requested vocab size: {args.vocab_size}")
+        print(f"Model vocab size set to: {vocab_size}")
+        args.vocab_size = vocab_size
 
         validation_size = int(len(dataset) * args.validation_split)
         test_size = int(len(dataset) * args.test_split)
@@ -157,10 +179,10 @@ class DatasetWrapper:
     @staticmethod
     def add_arguments(parser: argparse.ArgumentParser):
         parser.add_argument('--dataset-name', type=str, default='opus_books', help='Hugging Face dataset name')
-        parser.add_argument('--batch-size', type=int, default=4, help='Batch size for training and evaluation')
+        parser.add_argument('--batch-size', type=int, default=2, help='Batch size for training and evaluation')
         parser.add_argument('--src-lang', type=str, default='en', help='Source language for translation dataset')
         parser.add_argument('--tgt-lang', type=str, default='hu', help='Target language for translation dataset')
-        parser.add_argument('--max-length', type=int, default=1200, help='Maximum sequence length for tokenization')
+        parser.add_argument('--max-length', type=int, default=2048, help='Maximum sequence length for tokenization')
         # validation and test splits for tokenizer training
         parser.add_argument('--validation-split', type=float, default=0.1, help='Proportion of data for validation')
         parser.add_argument('--test-split', type=float, default=0.0, help='Proportion of data for testing')
@@ -251,11 +273,22 @@ def greedy_decode(model, dataset_wrapper, src, src_mask, max_length, device):
     eos = tgt_tokenizer.token_to_id("[EOS]")
     pad = tgt_tokenizer.token_to_id("[PAD]")
 
+    langs = dataset_wrapper.tokenizer_tgt.lang
+    if isinstance(langs, list) and len(langs) > 0:
+
+        # select a random target language token
+        tgt_lang = random.choice(langs)
+    elif isinstance(langs, str):
+        tgt_lang = langs
+
+    lang_token = f"[{tgt_lang}]"
+
     # Pre-compute source encoding
     encoder_output = model.encode(src, src_mask)
     # Initialize decoder input with SOS token
     decoder_input = torch.cat([
         torch.tensor([[sos]], device=device),  # (1, 1)
+        torch.tensor([[ tgt_tokenizer.token_to_id(lang_token) ]], device=device)
     ], dim=1).type_as(src)  # (1, 2)
     while True:
         if decoder_input.size(1) >= max_length:
@@ -419,11 +452,13 @@ if __name__ == "__main__":
             decoder_output = model.decode(tgt, encoder_output, src_mask, tgt_mask) # (batch_size, tgt_seq_len, d_model)
             projection_output = model.project(decoder_output) # (batch_size, tgt_seq_len, tgt_vocab_size)
 
-            label = batch['label'].to(device) # (batch_size, tgt_seq_len)
+            label = batch['label'].type(torch.int64).to(device) # (batch_size, tgt_seq_len)
             
             # (batch_size, tgt_seq_len, tgt_vocab_size) -> (batch_size * tgt_seq_len, tgt_vocab_size)
             loss = loss_fn(projection_output.view(-1, projection_output.size(-1)), label.view(-1))
             batch_iterator.set_postfix({'loss': f"{loss.item():6.3f}"})
+
+            del label
 
             # Log outputs for loss computation
             writer.add_scalar('Batch Loss', loss.item(), global_step)

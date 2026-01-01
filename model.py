@@ -432,7 +432,8 @@ class ProjectionLayer(nn.Module):
         nn.init.zeros_(self.linear.bias)
 
     def forward(self, x):
-        return torch.log_softmax(self.linear(x), dim=-1)
+        # return torch.log_softmax(self.linear(x), dim=-1)
+        return self.linear(x)
     
 class Transformer(nn.Module):
     def __init__(
