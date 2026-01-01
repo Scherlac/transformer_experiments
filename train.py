@@ -10,7 +10,8 @@ from datasets import load_dataset
 from tokenizers import Tokenizer
 from tokenizers.models import BPE
 from tokenizers.trainers import BpeTrainer
-from tokenizers.pre_tokenizers import Whitespace
+from tokenizers.pre_tokenizers import Metaspace
+from tokenizers.decoders import Metaspace as MetaspaceDecoder
 from torch.utils.data import DataLoader, Dataset, random_split
 from torch.utils.tensorboard import SummaryWriter
 
@@ -52,7 +53,10 @@ class TokenizerWrapper:
         else:
             self.tokenizer_path.parent.mkdir(parents=True, exist_ok=True)
             self.tokenizer = Tokenizer(BPE(unk_token="[UNK]"))
-            self.tokenizer.pre_tokenizer = Whitespace()
+            self.tokenizer.pre_tokenizer = Metaspace(replacement="\u2581")
+            # ensure decoder converts metaspace marker back to regular spaces on decode
+            # use space as replacement so decoded text contains normal spaces
+            self.tokenizer.decoder = MetaspaceDecoder(replacement="\u2581")
             # tokens for languages
             self.lang_tokens = { l: f"[{l}]" for l in ( [lang] if isinstance(lang, str) else lang ) }
 
@@ -73,6 +77,24 @@ class TokenizerWrapper:
         self.sos_token = "[SOS]"
         self.eos_token = "[EOS]"
         self.mask_token = "[MASK]"
+
+    def decode_ids(self, ids, skip_special_tokens: bool = True) -> str:
+        """Decode token ids and restore normal spaces and tag formatting.
+
+        - Replaces the metaspace marker (▁) with a normal space
+        - Collapses multiple spaces
+        - Removes spaces inside language tags like "[ en ]" -> "[en]"
+        """
+        # use tokenizer's decode first
+        text = self.tokenizer.decode(ids, skip_special_tokens=skip_special_tokens)
+        # replace metaspace marker U+2581 with a normal space
+        text = text.replace('\u2581', ' ')
+        # fix spaces inside tags like [ en ] -> [en]
+        text = re.sub(r"\[\s*([a-zA-Z0-9_]+)\s*\]", r"[\1]", text)
+        # collapse multiple spaces
+        text = re.sub(r" {2,}", " ", text)
+        # strip leading/trailing spaces
+        return text.strip()
 
 
     def get_all_texts(self, dataset):
@@ -335,15 +357,6 @@ def run_validation(model, dataset_wrapper, device, tqdm_print_fn):
 
             assert src.size(0) == 1, "Validation batch size should be 1"
 
-            encoder_output = greedy_decode(
-                model,
-                dataset_wrapper,
-                src,
-                src_mask,
-                max_length=dataset_wrapper.max_length,
-                device=device
-            )
-
             idx = 0
 
             # select two sample from batch at random from the first 10 samples
@@ -352,7 +365,16 @@ def run_validation(model, dataset_wrapper, device, tqdm_print_fn):
             target_text = batch['tgt_text'][idx]
             target_texts.append(target_text)
 
-            output_text = dataset_wrapper.tokenizer_tgt.tokenizer.decode(encoder_output[idx].detach().cpu().numpy(), skip_special_tokens=True)
+            encoder_output = greedy_decode(
+                model,
+                dataset_wrapper,
+                src,
+                src_mask,
+                max_length=len(target_text) + 10,
+                device=device
+            )
+
+            output_text = dataset_wrapper.tokenizer_tgt.decode_ids(encoder_output[idx].detach().cpu().numpy(), skip_special_tokens=True)
             predicted_texts.append(output_text)
 
             tqdm_print_fn('-'*50)
@@ -382,7 +404,7 @@ if __name__ == "__main__":
     DatasetWrapper.add_arguments(parser)
     ModelWrapper.add_arguments(parser)
     parser.add_argument('--experiment-name', type=str, default='transformer_experiment', help='Name of the experiment')
-    parser.add_argument('--learning-rate', type=float, default=3e-4, help='Learning rate for the optimizer')
+    parser.add_argument('--learning-rate', type=float, default=6e-4, help='Learning rate for the optimizer')
     parser.add_argument('--num-epochs', type=int, default=40, help='Number of training epochs')
     parser.add_argument('--data-path', type=str, default=str(data_root), help='Path to the data directory')
     parser.add_argument('--training-path', type=str, default=str(training_root), help='Path to the training runs directory')
@@ -455,7 +477,10 @@ if __name__ == "__main__":
             label = batch['label'].type(torch.int64).to(device) # (batch_size, tgt_seq_len)
             
             # (batch_size, tgt_seq_len, tgt_vocab_size) -> (batch_size * tgt_seq_len, tgt_vocab_size)
-            loss = loss_fn(projection_output.view(-1, projection_output.size(-1)), label.view(-1))
+            current_projection = projection_output.view(-1, projection_output.size(-1))
+            current_label = label.view(-1)
+
+            loss = loss_fn(current_projection, current_label)
             batch_iterator.set_postfix({'loss': f"{loss.item():6.3f}"})
 
             del label
@@ -475,6 +500,20 @@ if __name__ == "__main__":
 
             # Run validation every 500 steps
             if (batch_idx + 1) % 100 == 0:
+                batch_iterator.write(f"Running validation at step {global_step}...")
+                batch_iterator.write('-'*50)
+                batch_iterator.write(f"Source: {src_texts[0]}")
+                batch_iterator.write(f"Target: {tgt_texts[0]}")
+                current_ids = projection_output[0].argmax(dim=-1).detach().cpu().numpy()
+
+                current_text = dataset_wrapper.tokenizer_tgt.decode_ids(
+                    current_ids[0:len(tgt_texts[0])],
+                    skip_special_tokens=True
+                    )
+                
+                batch_iterator.write(f"Predicted: {current_text}")
+                
+            if (batch_idx + 1) % 200 == 0:
                 val_loss = run_validation(
                     model,
                     dataset_wrapper,
@@ -486,17 +525,31 @@ if __name__ == "__main__":
                 model.train()
 
 
+            if (batch_idx + 1) % 1000 == 0:
+
+
+                # Save model checkpoint
+                model_filepath = get_model_filepath(args, epoch)
+                torch.save(
+                    {'epoch': epoch,
+                    'global_step': global_step,
+                    'model_state_dict': model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict()
+                    }, model_filepath)
+                print(f"Model saved to {model_filepath}")
+                model.train()
+
+
+
         # Save model checkpoint
         model_filepath = get_model_filepath(args, epoch)
         torch.save(
             {'epoch': epoch,
-             'global_step': global_step,
-             'model_state_dict': model.state_dict(),
-             'optimizer_state_dict': optimizer.state_dict()
+            'global_step': global_step,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict()
             }, model_filepath)
         print(f"Model saved to {model_filepath}")
-
-
 
 
 
