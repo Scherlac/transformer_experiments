@@ -6,8 +6,8 @@ import torch
 import torch.nn as nn
 from datasets import load_dataset
 from tokenizers import Tokenizer
-from tokenizers.models import WordLevel
-from tokenizers.trainers import WordLevelTrainer
+from tokenizers.models import BPE
+from tokenizers.trainers import BpeTrainer
 from tokenizers.pre_tokenizers import Whitespace
 from torch.utils.data import DataLoader, Dataset, random_split
 from torch.utils.tensorboard import SummaryWriter
@@ -16,6 +16,8 @@ from dataset import BilingualDataset, causal_mask
 from model import Transformer 
 
 import argparse
+
+
 
 # from transformers import AutoTokenizer, AutoModelForSequenceClassification
 # from torch.optim import AdamW
@@ -28,24 +30,38 @@ class TokenizerWrapper:
             self,
             arguments: argparse.Namespace,
             dataset=None,
-            lang: str = "en"
+            lang: str = 'all'
     ):
         self.tokenizer_path = data_root / arguments.tokenizer_path / arguments.tokenizer_file.format(lang=lang)
-        self.vocab_size = arguments.vocab_size
         self.lang = lang
+        self.vocab_size = arguments.vocab_size
 
         if self.tokenizer_path.exists():
             self.tokenizer = Tokenizer.from_file(str(self.tokenizer_path))
         else:
             self.tokenizer_path.parent.mkdir(parents=True, exist_ok=True)
-            self.tokenizer = Tokenizer(WordLevel(unk_token="[UNK]"))
+            self.tokenizer = Tokenizer(BPE(unk_token="[UNK]"))
             self.tokenizer.pre_tokenizer = Whitespace()
-            self.trainer = WordLevelTrainer(
+            self.trainer = BpeTrainer(
                 vocab_size=self.vocab_size,
                 special_tokens=["[UNK]", "[PAD]", "[SOS]", "[EOS]", "[MASK]"],
                 min_frequency=2
             )
-            self.train_tokenizer(dataset)
+            if dataset is not None:
+                self.train_tokenizer(dataset)
+            self.tokenizer.save(str(self.tokenizer_path))
+        
+        self.vocab_size = len(self.tokenizer.get_vocab())
+        
+        # Assign special tokens
+        self.unk_token = "[UNK]"
+        self.pad_token = "[PAD]"
+        self.sos_token = "[SOS]"
+        self.eos_token = "[EOS]"
+        self.mask_token = "[MASK]"
+
+
+
 
     def get_all_texts(self, dataset):
         for sample in dataset:
@@ -63,7 +79,7 @@ class TokenizerWrapper:
     def add_arguments(parser: argparse.ArgumentParser):
         parser.add_argument('--tokenizer-path', type=str, default="tokens", help='Path to save/load the tokenizer')
         parser.add_argument('--tokenizer-file', type=str, default='tokenizer_{lang}.json', help='Tokenizer file name pattern with {lang} placeholder')
-        parser.add_argument('--vocab-size', type=int, default=30522, help='Vocabulary size for the tokenizer')
+        parser.add_argument('--vocab-size', type=int, default=20000, help='Vocabulary size for the tokenizer')
 
 class DatasetWrapper:
     def __init__(
@@ -80,7 +96,12 @@ class DatasetWrapper:
         self.tokenizer_src = TokenizerWrapper(args, dataset=dataset, lang=args.src_lang)
         self.tokenizer_tgt = TokenizerWrapper(args, dataset=dataset, lang=args.tgt_lang)
 
-        print(f"Source tokenizer vocab size: {len(self.tokenizer_src.tokenizer.get_vocab())}")
+        # Update vocab size to actual tokenizer size
+        args.vocab_size = max(self.tokenizer_src.vocab_size, self.tokenizer_tgt.vocab_size)
+
+        print(f"Source tokenizer vocab size: {self.tokenizer_src.vocab_size}")
+        print(f"Target tokenizer vocab size: {self.tokenizer_tgt.vocab_size}")
+        print(f"Model vocab size set to: {args.vocab_size}")
 
         validation_size = int(len(dataset) * args.validation_split)
         test_size = int(len(dataset) * args.test_split)
@@ -136,10 +157,10 @@ class DatasetWrapper:
     @staticmethod
     def add_arguments(parser: argparse.ArgumentParser):
         parser.add_argument('--dataset-name', type=str, default='opus_books', help='Hugging Face dataset name')
-        parser.add_argument('--batch-size', type=int, default=24, help='Batch size for training and evaluation')
+        parser.add_argument('--batch-size', type=int, default=4, help='Batch size for training and evaluation')
         parser.add_argument('--src-lang', type=str, default='en', help='Source language for translation dataset')
-        parser.add_argument('--tgt-lang', type=str, default='it', help='Target language for translation dataset')
-        parser.add_argument('--max-length', type=int, default=350, help='Maximum sequence length for tokenization')
+        parser.add_argument('--tgt-lang', type=str, default='hu', help='Target language for translation dataset')
+        parser.add_argument('--max-length', type=int, default=1200, help='Maximum sequence length for tokenization')
         # validation and test splits for tokenizer training
         parser.add_argument('--validation-split', type=float, default=0.1, help='Proportion of data for validation')
         parser.add_argument('--test-split', type=float, default=0.0, help='Proportion of data for testing')
@@ -265,7 +286,15 @@ def run_validation(model, dataset_wrapper, device, tqdm_print_fn):
     predicted_texts = []
 
     with torch.no_grad():
+        i : int = 30
+        import random
+        idxs = [ random.randint(0,30) for _ in range(2)]
         for batch in dataset_wrapper.val_dataloader:
+
+            i -= 1
+            if i not in idxs:
+                continue
+
             src = batch['encoder_input'].to(device) # (batch_size, src_seq_len)
             # tgt = batch['decoder_input'].to(device) # (batch_size, tgt_seq_len)
             src_mask = batch['encoder_mask'].to(device) # (batch_size, 1, 1, src_seq_len)
@@ -282,12 +311,15 @@ def run_validation(model, dataset_wrapper, device, tqdm_print_fn):
                 device=device
             )
 
-            source_text = batch['src_text'][0]
+            idx = 0
+
+            # select two sample from batch at random from the first 10 samples
+            source_text = batch['src_text'][idx]
             source_texts.append(source_text)
-            target_text = batch['tgt_text'][0]
+            target_text = batch['tgt_text'][idx]
             target_texts.append(target_text)
 
-            output_text = dataset_wrapper.tokenizer_tgt.tokenizer.decode(encoder_output[0].detach().cpu().numpy(), skip_special_tokens=True)
+            output_text = dataset_wrapper.tokenizer_tgt.tokenizer.decode(encoder_output[idx].detach().cpu().numpy(), skip_special_tokens=True)
             predicted_texts.append(output_text)
 
             tqdm_print_fn('-'*50)
@@ -317,10 +349,12 @@ if __name__ == "__main__":
     DatasetWrapper.add_arguments(parser)
     ModelWrapper.add_arguments(parser)
     parser.add_argument('--experiment-name', type=str, default='transformer_experiment', help='Name of the experiment')
-    parser.add_argument('--learning-rate', type=float, default=4e-4, help='Learning rate for the optimizer')
+    parser.add_argument('--learning-rate', type=float, default=3e-4, help='Learning rate for the optimizer')
     parser.add_argument('--num-epochs', type=int, default=40, help='Number of training epochs')
     parser.add_argument('--data-path', type=str, default=str(data_root), help='Path to the data directory')
     parser.add_argument('--training-path', type=str, default=str(training_root), help='Path to the training runs directory')
+    # skip loading optimizer state for simplicity
+    parser.add_argument('--skip-optimizer-state', action='store_true', help='Skip loading optimizer state from checkpoint')
 
     args = parser.parse_args()
 
@@ -353,7 +387,9 @@ if __name__ == "__main__":
         print(f"Loading model from {latest_model_info}")
         state = torch.load(latest_model_info)
         model.load_state_dict(state['model_state_dict'])
-        optimizer.load_state_dict(state['optimizer_state_dict'])
+        if not args.skip_optimizer_state:
+            print("Loading optimizer state")
+            optimizer.load_state_dict(state['optimizer_state_dict'])
         initial_epoch = state.get('epoch', 0) + 1
         global_step = state.get('global_step', 0)
     else:

@@ -1,5 +1,6 @@
 # transformer model experiment
 # src: https://www.youtube.com/watch?v=ISNdQcPhsts
+# SRC: https://github.com/hkproj/pytorch-transformer
 # implementing input embedding and positional encoding layers
 # ![img](ModalNet-21.png)
 # the paper "Attention is all you need" introduces these components in detail
@@ -9,6 +10,9 @@
 # SRC: https://nlp.seas.harvard.edu/2018/04/03/attention.html
 # SRC: https://jalammar.github.io/illustrated-transformer/
 # SRC: https://github.com/harvardnlp/annotated-transformer
+# on tokenizer:
+# https://www.youtube.com/watch?v=zduSFxRajkE
+# https://github.com/karpathy/minbpe/blob/master/exercise.md
 
 
 
