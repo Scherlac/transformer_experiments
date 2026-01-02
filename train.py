@@ -315,7 +315,8 @@ def greedy_decode(model, dataset_wrapper, src, src_mask, max_length, device):
     while True:
         if decoder_input.size(1) >= max_length:
             break
-        tgt_mask = causal_mask(decoder_input.size(1)).type_as(src_mask).to(device)  # (1, tgt_seq_len, tgt_seq_len)
+        # tgt_mask = causal_mask(decoder_input.size(1)).type_as(src_mask).to(device)  # (1, tgt_seq_len, tgt_seq_len)
+        tgt_mask = None
         decoder_output = model.decode(decoder_input, encoder_output, src_mask, tgt_mask)  # (1, tgt_seq_len, d_model)
         projection_output = model.project(decoder_output[:, -1:, :])
 
@@ -352,9 +353,11 @@ def run_validation(model, dataset_wrapper, device, tqdm_print_fn):
 
             src = batch['encoder_input'].to(device) # (batch_size, src_seq_len)
             # tgt = batch['decoder_input'].to(device) # (batch_size, tgt_seq_len)
-            src_mask = batch['encoder_mask'].to(device) # (batch_size, 1, 1, src_seq_len)
+            # src_mask = batch['encoder_mask'].to(device) # (batch_size, 1, 1, src_seq_len)
+            src_mask = None
             # tgt_mask = batch['decoder_mask'].to(device) # (batch_size, 1, tgt_seq_len, tgt_seq_len)
 
+            
             assert src.size(0) == 1, "Validation batch size should be 1"
 
             idx = 0
@@ -465,8 +468,10 @@ if __name__ == "__main__":
         for batch_idx, batch in enumerate(batch_iterator):
             src = batch['encoder_input'].to(device) # (batch_size, src_seq_len)
             tgt = batch['decoder_input'].to(device) # (batch_size, tgt_seq_len)
-            src_mask = batch['encoder_mask'].to(device) # (batch_size, 1, 1, src_seq_len)
-            tgt_mask = batch['decoder_mask'].to(device) # (batch_size, 1, tgt_seq_len, tgt_seq_len)
+            # src_mask = batch['encoder_mask'].to(device) # (batch_size, 1, 1, src_seq_len)
+            # tgt_mask = batch['decoder_mask'].to(device) # (batch_size, 1, tgt_seq_len, tgt_seq_len)
+            src_mask = None
+            tgt_mask = None
             src_texts = batch['src_text']
             tgt_texts = batch['tgt_text']
 

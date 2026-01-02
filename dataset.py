@@ -99,22 +99,22 @@ class BilingualDataset(Dataset):
         assert len(tgt_input_ids) == self.max_length, f"Target input ids length {len(tgt_input_ids)} does not match max length {self.max_length}"
         assert len(tgt_labels) == self.max_length, f"Target labels length {len(tgt_labels)} does not match max length {self.max_length}"
 
-        # Create attention masks for encoder
-        encoder_mask = (src_input_ids != self.pad_token_id)
-        encoder_mask = encoder_mask.unsqueeze(0)
-        encoder_mask = encoder_mask.unsqueeze(0).type(torch.int)
+        # # Create attention masks for encoder
+        # encoder_mask = (src_input_ids != self.pad_token_id)
+        # encoder_mask = encoder_mask.unsqueeze(0)
+        # encoder_mask = encoder_mask.unsqueeze(0).type(torch.int)
 
-        # Create decoder mask will be created in the model using subsequent masking
-        decoder_mask = (tgt_input_ids != self.pad_token_id)
-        decoder_mask = decoder_mask.unsqueeze(0)
-        decoder_mask = decoder_mask.unsqueeze(0).type(torch.int)
-        decoder_mask = decoder_mask & self.causal_mask
+        # # Create decoder mask will be created in the model using subsequent masking
+        # decoder_mask = (tgt_input_ids != self.pad_token_id)
+        # decoder_mask = decoder_mask.unsqueeze(0)
+        # decoder_mask = decoder_mask.unsqueeze(0).type(torch.int)
+        # decoder_mask = decoder_mask & self.causal_mask
 
         return {
             'encoder_input': src_input_ids,
             'decoder_input': tgt_input_ids,
-            'encoder_mask': encoder_mask,
-            'decoder_mask': decoder_mask,
+            # 'encoder_mask': None,
+            # 'decoder_mask': None,
             'label': tgt_labels,
             'src_text': src_text,
             'tgt_text': tgt_text
