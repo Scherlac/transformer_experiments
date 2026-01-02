@@ -154,6 +154,7 @@ class MultiHeadAttention(nn.Module):
             d_model: int,
             num_heads: int,
             bias: bool = False,
+            is_causal: bool = False,
             dropout: float = 0.1,
             ):
         """
@@ -167,6 +168,7 @@ class MultiHeadAttention(nn.Module):
         assert d_model % num_heads == 0, "d_model must be divisible by num_heads"
         self.d_model = d_model
         self.num_heads = num_heads
+        self.is_causal = is_causal
         self.dropout = dropout
         self.d_k = d_model // num_heads
 
@@ -241,7 +243,7 @@ class MultiHeadAttention(nn.Module):
             value,
             attn_mask=None,
             dropout_p=self.atten_dropout.p if self.training else 0.0,
-            is_causal=True
+            is_causal=self.is_causal
         )
 
         # concatenate heads and put through final linear layer
@@ -364,7 +366,7 @@ class DecoderBlock(nn.Module):
             dropout (float): Dropout rate.
         """
         super(DecoderBlock, self).__init__()
-        self.self_attn = MultiHeadAttention(d_model, num_heads, dropout)
+        self.self_attn = MultiHeadAttention(d_model, num_heads, dropout, is_causal=True)
         self.src_attn = MultiHeadAttention(d_model, num_heads, dropout)
         self.feed_forward = FeedForward(d_model, d_ff, dropout)
         self.sublayer1 = ResidualConnection(d_model, dropout)

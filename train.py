@@ -201,7 +201,7 @@ class DatasetWrapper:
     @staticmethod
     def add_arguments(parser: argparse.ArgumentParser):
         parser.add_argument('--dataset-name', type=str, default='opus_books', help='Hugging Face dataset name')
-        parser.add_argument('--batch-size', type=int, default=2, help='Batch size for training and evaluation')
+        parser.add_argument('--batch-size', type=int, default=8, help='Batch size for training and evaluation')
         parser.add_argument('--src-lang', type=str, default='en', help='Source language for translation dataset')
         parser.add_argument('--tgt-lang', type=str, default='hu', help='Target language for translation dataset')
         parser.add_argument('--max-length', type=int, default=2048, help='Maximum sequence length for tokenization')
@@ -407,7 +407,7 @@ if __name__ == "__main__":
     DatasetWrapper.add_arguments(parser)
     ModelWrapper.add_arguments(parser)
     parser.add_argument('--experiment-name', type=str, default='transformer_experiment', help='Name of the experiment')
-    parser.add_argument('--learning-rate', type=float, default=6e-4, help='Learning rate for the optimizer')
+    parser.add_argument('--learning-rate', type=float, default=3e-4, help='Learning rate for the optimizer')
     parser.add_argument('--num-epochs', type=int, default=40, help='Number of training epochs')
     parser.add_argument('--data-path', type=str, default=str(data_root), help='Path to the data directory')
     parser.add_argument('--training-path', type=str, default=str(training_root), help='Path to the training runs directory')
